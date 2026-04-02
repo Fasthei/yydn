@@ -1,6 +1,5 @@
 "use client"
 
-// Cache bust: Clear old compilation errors
 import { useState, useRef, useEffect, useCallback } from "react"
 import { Sidebar } from "@/components/chat/sidebar"
 import { Header } from "@/components/chat/header"
@@ -15,6 +14,7 @@ import { ConversationBranch, type Branch, type Checkpoint } from "@/components/c
 import { ConnectionStatus, RejoinBanner, type ConnectionState } from "@/components/chat/connection-status"
 import { ApprovalDialog, type ApprovalRequest } from "@/components/chat/approval-dialog"
 import { ScrollArea } from "@/components/ui/scroll-area"
+import * as kb from "@/lib/kb-api"
 
 // Mock data
 const mockChats = [
@@ -128,6 +128,10 @@ export default function ChatPage() {
   const [documentVersions, setDocumentVersions] = useState<{ id: string; timestamp: string; label: string }[]>([])
   const [isDocumentGenerating, setIsDocumentGenerating] = useState(false)
   const [isDocumentSaving, setIsDocumentSaving] = useState(false)
+  const [currentDocId, setCurrentDocId] = useState<string>("")
+
+  // Real backend thread ID (not the UI chat id)
+  const [backendThreadId, setBackendThreadId] = useState<string>("")
 
   // Connection State
   const [connectionStatus, setConnectionStatus] = useState<ConnectionState>("connected")
@@ -186,154 +190,92 @@ export default function ChatPage() {
     }
   }
 
-  const simulateDeepSearch = async () => {
+  const doRealSearch = async (query: string) => {
     setSearchSteps([
-      { step: "分析查询意图", status: "completed", detail: "识别关键词和搜索范围" },
-      { step: "搜索网络资源", status: "in-progress", detail: "正在检索 15 个相关网页..." },
-      { step: "检索知识库", status: "pending" },
-      { step: "查询内部文档", status: "pending" },
-      { step: "整合与排序", status: "pending" },
+      { step: "分析查询意图", status: "in-progress", detail: query.slice(0, 60) },
+      { step: "检索 openclaw-resources 索引", status: "pending" },
+      { step: "排序与截断", status: "pending" },
     ])
 
-    await new Promise(r => setTimeout(r, 800))
-    setSearchSteps(prev => prev.map((s, i) => 
-      i === 1 ? { ...s, status: "completed" as const, detail: "已检索 15 个网页" } :
-      i === 2 ? { ...s, status: "in-progress" as const, detail: "正在匹配知识库..." } : s
-    ))
+    try {
+      setSearchSteps(prev => prev.map((s, i) =>
+        i === 0 ? { ...s, status: "completed" as const } :
+        i === 1 ? { ...s, status: "in-progress" as const, detail: "正在查询知识库..." } : s
+      ))
 
-    await new Promise(r => setTimeout(r, 600))
-    setSearchSteps(prev => prev.map((s, i) => 
-      i === 2 ? { ...s, status: "completed" as const, detail: "匹配到 8 条记录" } :
-      i === 3 ? { ...s, status: "in-progress" as const, detail: "正在查询内部手册..." } : s
-    ))
+      const result = await kb.searchKb(query, 8)
 
-    await new Promise(r => setTimeout(r, 500))
-    setSearchSteps(prev => prev.map((s, i) => 
-      i === 3 ? { ...s, status: "completed" as const, detail: "找到 3 份相关文档" } :
-      i === 4 ? { ...s, status: "in-progress" as const, detail: "正在智能排序..." } : s
-    ))
+      setSearchSteps(result.steps.map(s => ({
+        step: s.step,
+        status: s.status === "completed" ? "completed" as const : "pending" as const,
+        detail: s.detail,
+      })))
 
-    await new Promise(r => setTimeout(r, 400))
-    setSearchSteps(prev => prev.map((s, i) => 
-      i === 4 ? { ...s, status: "completed" as const, detail: "完成" } : s
-    ))
-
-    // Generate mock sources
-    setCurrentSources([
-      { id: "1", type: "web", title: "API 性能优化最佳实践", url: "https://example.com/api-perf", snippet: "本文介绍了 API 性能优化的多种方法，包括缓存策略、数据库查询优化、连接池配置等...", score: 0.95, domain: "example.com" },
-      { id: "2", type: "kb", title: "内部性能调优指南 v2.0", snippet: "针对我们的微服务架构，推荐的性能调优步骤包括：1. 分析慢查询日志 2. 检查服务间调用链路...", score: 0.88 },
-      { id: "3", type: "web", title: "Node.js 高并发处理", url: "https://blog.example.com/nodejs", snippet: "在高并发场景下，Node.js 需要特别注意事件循环阻塞问题...", score: 0.82, domain: "blog.example.com" },
-      { id: "4", type: "internal", title: "Q2 性能报告", snippet: "根据本季度监控数据，主要性能瓶颈集中在数据库连接和外部 API 调用...", score: 0.78 },
-      { id: "5", type: "kb", title: "故障排查手册", snippet: "当 API 响应超时时，按以下顺序排查：网络延迟、服务负载、数据库性能...", score: 0.75 },
-    ])
-    setShowSourcesPanel(true)
+      const mapped: Source[] = result.sources.map(s => ({
+        id: s.id,
+        type: s.type as Source["type"],
+        title: s.title,
+        snippet: s.snippet,
+        score: s.score,
+        url: s.url,
+        domain: s.domain || s.category,
+      }))
+      setCurrentSources(mapped)
+      setShowSourcesPanel(true)
+    } catch (err) {
+      setSearchSteps([{ step: "检索失败", status: "completed", detail: String(err) }])
+    }
   }
 
-  const simulateSandboxExecution = async () => {
+  const doRealSandbox = async () => {
     setShowSandboxPanel(true)
     setSandboxStatus("running")
-    setSandboxSteps([
-      { id: "1", name: "初始化测试环境", status: "running" },
-      { id: "2", name: "加载工单数据", status: "pending" },
-      { id: "3", name: "执行诊断脚本", status: "pending" },
-      { id: "4", name: "分析执行结果", status: "pending" },
-    ])
+    setSandboxSteps([{ id: "0", name: "正在执行...", status: "running" }])
 
-    await new Promise(r => setTimeout(r, 800))
-    setSandboxSteps(prev => prev.map((s, i) => 
-      i === 0 ? { ...s, status: "success" as const, duration: "0.8s", logs: ["[INFO] 环境初始化完成", "[INFO] Node.js v20.x 就绪"] } :
-      i === 1 ? { ...s, status: "running" as const } : s
-    ))
-
-    await new Promise(r => setTimeout(r, 600))
-    setSandboxSteps(prev => prev.map((s, i) => 
-      i === 1 ? { ...s, status: "success" as const, duration: "0.6s", logs: ["[INFO] 已加载 2 个工单", "[INFO] 解析工单内容..."] } :
-      i === 2 ? { ...s, status: "running" as const } : s
-    ))
-
-    await new Promise(r => setTimeout(r, 1200))
-    setSandboxSteps(prev => prev.map((s, i) => 
-      i === 2 ? { 
-        ...s, 
-        status: "success" as const, 
-        duration: "1.2s", 
-        code: "const result = await diagnose(tickets);\nconsole.log(result);",
-        logs: ["[INFO] 执行诊断脚本...", "[INFO] 检测到 3 个潜在问题"] 
-      } :
-      i === 3 ? { ...s, status: "running" as const } : s
-    ))
-
-    await new Promise(r => setTimeout(r, 500))
-    setSandboxSteps(prev => prev.map((s, i) => 
-      i === 3 ? { 
-        ...s, 
-        status: "success" as const, 
-        duration: "0.5s",
-        output: "诊断完成。发现问题：\n1. 数据库连接池配置不当\n2. 缺少查询缓存\n3. API 调用无超时设置"
-      } : s
-    ))
-    setSandboxStatus("completed")
+    try {
+      const result = await kb.runSandbox(loadedTicketIds)
+      setSandboxSteps(result.steps.map(s => ({
+        id: s.id,
+        name: s.name,
+        status: s.status as SandboxStep["status"],
+        duration: s.duration,
+        logs: s.logs,
+        code: s.code,
+        output: s.output,
+      })))
+      setSandboxStatus(result.status === "completed" ? "completed" : "error")
+    } catch (err) {
+      setSandboxSteps([{ id: "err", name: "执行失败", status: "error", output: String(err) }])
+      setSandboxStatus("error")
+    }
   }
 
-  const simulateDocumentGeneration = async () => {
+  const doRealDocumentGeneration = async (prompt: string) => {
     setShowDocumentWorkspace(true)
     setIsDocumentGenerating(true)
-    setDocumentTitle("API 性能优化方案")
     setDocumentContent("")
+    setDocumentTitle(prompt.slice(0, 30) || "AI 文档")
 
-    const content = `# API 性能优化方案
-
-## 1. 问题概述
-
-根据工单 TK-1001 的描述，生产环境 API 在高峰期响应时间超过 30 秒，严重影响用户体验。
-
-## 2. 问题分析
-
-### 2.1 根本原因
-- 数据库连接池配置不当
-- 缺少有效的查询缓存机制
-- API 调用缺少超时设置
-
-### 2.2 影响范围
-- 影响所有核心业务 API
-- 高峰期用户流失率上升 15%
-
-## 3. 优化方案
-
-### 3.1 短期措施
-1. 调整数据库连接池大小
-2. 添加 Redis 查询缓存
-3. 设置合理的 API 超时时间
-
-### 3.2 长期优化
-1. 引入读写分离架构
-2. 实施数据库分片策略
-3. 部署 CDN 加速静态资源
-
-## 4. 实施计划
-
-| 阶段 | 任务 | 负责人 | 预计完成时间 |
-|------|------|--------|------------|
-| 第一阶段 | 连接池优化 | 张三 | 3 天 |
-| 第二阶段 | 缓存机制 | 李四 | 5 天 |
-| 第三阶段 | 架构升级 | 团队 | 2 周 |
-
-## 5. 预期效果
-
-- API 响应时间降低 80%
-- 系统吞吐量提升 3 倍
-- 用户满意度提升至 95%`
-
-    // Simulate streaming content
-    for (let i = 0; i < content.length; i += 20) {
-      await new Promise(r => setTimeout(r, 30))
-      setDocumentContent(content.slice(0, i + 20))
+    try {
+      const result = await kb.generateDocument(prompt, prompt.slice(0, 30), currentChatId)
+      setDocumentTitle(result.title)
+      const content = result.content
+      for (let i = 0; i < content.length; i += 40) {
+        await new Promise(r => setTimeout(r, 15))
+        setDocumentContent(content.slice(0, i + 40))
+      }
+      setDocumentVersions(
+        result.versions.map(v => ({
+          id: v.id,
+          timestamp: new Date(v.timestamp * 1000).toLocaleTimeString("zh-CN"),
+          label: v.label,
+        }))
+      )
+      setCurrentDocId(result.doc_id)
+    } catch (err) {
+      setDocumentContent(`生成失败: ${err}`)
     }
-    
     setIsDocumentGenerating(false)
-    setDocumentVersions([
-      { id: "v1", timestamp: new Date().toLocaleTimeString("zh-CN"), label: "AI 生成初稿" }
-    ])
   }
 
   const triggerApprovalRequest = (type: "dangerous" | "sensitive" | "external" | "data-modify" = "sensitive") => {
@@ -433,54 +375,118 @@ export default function ChatPage() {
       timestamp: new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" }),
       ticketContext: loadedTicketIds.length > 0 ? loadedTicketIds : undefined,
     }
-    
     setMessages((prev) => [...prev, userMessage])
     setIsLoading(true)
 
-    // Handle different tools
     if (options.tool === "search" && options.searchMode === "deep") {
       setSearchDepth("deep")
-      await simulateDeepSearch()
+      await doRealSearch(message)
     } else if (options.tool === "sandbox") {
-      await simulateSandboxExecution()
+      await doRealSandbox()
     } else if (options.tool === "document") {
-      await simulateDocumentGeneration()
+      await doRealDocumentGeneration(message)
     }
 
-    // Simulate AI response
-    setTimeout(() => {
-      let toolUsed: string | undefined
-      let sources: Source[] | undefined
-
-      if (options.tool === "search") {
-        toolUsed = options.searchMode === "deep" ? "深度搜索" : "快速搜索"
-        if (options.searchMode === "deep") {
-          sources = currentSources
+    let threadId = backendThreadId
+    if (!threadId) {
+      try {
+        const t = await kb.createThread()
+        threadId = t.thread_id
+        setBackendThreadId(threadId)
+        if (!currentChatId) {
+          const chatId = threadId
+          setChats(prev => [{ id: chatId, title: message.slice(0, 20) || "新对话", branchCount: 0 }, ...prev])
+          setCurrentChatId(chatId)
         }
-      } else if (options.tool === "document") {
-        toolUsed = "文档生成"
-      } else if (options.tool === "sandbox") {
-        toolUsed = "沙盒执行"
+      } catch {
+        setMessages(prev => [...prev, {
+          id: (Date.now() + 1).toString(), role: "assistant",
+          content: "无法连接后端服务，请检查 NEXT_PUBLIC_KB_API_BASE 配置。",
+          timestamp: new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" }),
+        }])
+        setIsLoading(false)
+        return
+      }
+    }
+
+    try {
+      const { events } = kb.streamChat(threadId, message, { ticketIds: loadedTicketIds })
+      let aiMsgId = ""
+      let fullContent = ""
+      let toolUsed: string | undefined
+      let msgSources: Source[] | undefined
+      const ts = new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })
+
+      for await (const evt of events) {
+        if (evt.event === "messages") {
+          const d = evt.data as { id: string; content: { text: string }[] }
+          aiMsgId = d.id
+          const token = d.content.map(c => c.text).join("")
+          fullContent += token
+          setMessages(prev => {
+            const existing = prev.find(m => m.id === aiMsgId)
+            if (existing) {
+              return prev.map(m => m.id === aiMsgId ? { ...m, content: fullContent } : m)
+            }
+            return [...prev, { id: aiMsgId, role: "assistant" as const, content: fullContent, timestamp: ts }]
+          })
+        } else if (evt.event === "updates") {
+          const d = evt.data as Record<string, unknown>
+          if (d.event === "sources" && Array.isArray(d.sources)) {
+            const srcs = (d.sources as kb.KbSource[]).map(s => ({
+              id: s.id, type: s.type as Source["type"], title: s.title,
+              snippet: s.snippet, score: s.score, url: s.url, domain: s.domain || s.category,
+            }))
+            setCurrentSources(srcs)
+            if (srcs.length > 0) {
+              setShowSourcesPanel(true)
+              msgSources = srcs
+            }
+          } else if (d.event === "tool_status") {
+            const name = d.name as string
+            if (name === "kb_search") toolUsed = "知识检索"
+            else if (name === "gongdan") toolUsed = "工单查询"
+          } else if (d.event === "interrupt") {
+            setApprovalRequest({
+              id: (d.run_id as string) || Date.now().toString(),
+              type: "sensitive",
+              title: (d.title as string) || "需要审批",
+              description: (d.description as string) || "",
+              details: {},
+              timestamp: new Date().toISOString(),
+            })
+            setShowApprovalDialog(true)
+          }
+        } else if (evt.event === "values") {
+          const d = evt.data as { messages: { content: string }[] }
+          if (d.messages?.[0]?.content) fullContent = d.messages[0].content
+        } else if (evt.event === "end") {
+          break
+        }
       }
 
-      const assistantMessage: ChatMessage = {
-        id: (Date.now() + 1).toString(),
-        role: "assistant",
-        content: generateMockResponse(message, options, loadedTicketIds),
-        timestamp: new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" }),
-        toolUsed,
-        sources,
-        ticketContext: loadedTicketIds.length > 0 ? loadedTicketIds : undefined,
+      if (aiMsgId && fullContent) {
+        setMessages(prev => prev.map(m =>
+          m.id === aiMsgId ? { ...m, content: fullContent, toolUsed, sources: msgSources } : m
+        ))
       }
-      
-      setMessages((prev) => [...prev, assistantMessage])
-      setIsLoading(false)
-    }, options.tool === "search" && options.searchMode === "deep" ? 500 : 1500)
+
+      if (options.tool === "search") toolUsed = options.searchMode === "deep" ? "深度搜索" : "快速搜索"
+    } catch (err) {
+      setMessages(prev => [...prev, {
+        id: (Date.now() + 2).toString(), role: "assistant" as const,
+        content: `请求失败: ${err}`,
+        timestamp: new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" }),
+      }])
+    }
+
+    setIsLoading(false)
   }
 
   const handleNewChat = () => {
     setMessages([])
     setCurrentChatId(undefined)
+    setBackendThreadId("")
     setLoadedTicketIds([])
     setSelectedTicketIds([])
     setShowSourcesPanel(false)
@@ -490,6 +496,7 @@ export default function ChatPage() {
     setSandboxSteps([])
     setDocumentContent("")
     setDocumentTitle("")
+    setCurrentDocId("")
   }
 
   const handleDeleteChat = (chatId: string) => {
@@ -539,15 +546,27 @@ export default function ChatPage() {
     }
   }
 
-  const handleDocumentSave = () => {
+  const handleDocumentSave = async () => {
     setIsDocumentSaving(true)
-    setTimeout(() => {
-      setIsDocumentSaving(false)
-      setDocumentVersions(prev => [
-        { id: `v${prev.length + 1}`, timestamp: new Date().toLocaleTimeString("zh-CN"), label: "手动保存" },
-        ...prev
-      ])
-    }, 800)
+    try {
+      if (currentDocId) {
+        const res = await kb.saveDocument(currentDocId, documentContent, "手动保存")
+        if (res.version) {
+          setDocumentVersions(prev => [
+            { id: res.version.id, timestamp: new Date(res.version.timestamp * 1000).toLocaleTimeString("zh-CN"), label: res.version.label },
+            ...prev,
+          ])
+        }
+      } else {
+        setDocumentVersions(prev => [
+          { id: `v${prev.length + 1}`, timestamp: new Date().toLocaleTimeString("zh-CN"), label: "本地保存" },
+          ...prev,
+        ])
+      }
+    } catch {
+      // fallback
+    }
+    setIsDocumentSaving(false)
   }
 
   const handleDocumentExport = (format: "md" | "docx" | "pdf") => {
@@ -690,7 +709,7 @@ export default function ChatPage() {
               steps={sandboxSteps}
               environment="Node.js v20.x"
               ticketContext={loadedTicketIds}
-              onRerun={simulateSandboxExecution}
+              onRerun={doRealSandbox}
               onStop={() => setSandboxStatus("idle")}
             />
           )}
