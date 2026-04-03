@@ -13,10 +13,5 @@ next.user-config.*
 # Common ignores
 node_modules
 .next/
-out/
-dist/
 .DS_Store
-*.tsbuildinfo
-.env
-.env.local
-*.zip
+.vercel

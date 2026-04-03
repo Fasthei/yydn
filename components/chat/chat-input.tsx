@@ -294,18 +294,18 @@ export function ChatInput({
                     className="gap-1 text-muted-foreground hover:text-foreground"
                   >
                     <Sparkles className="h-4 w-4 text-primary" />
-                    <span>WBChat Pro</span>
+                    <span>运营大脑 Pro</span>
                     <ChevronDown className="h-3 w-3" />
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" className="w-48">
                   <DropdownMenuItem>
                     <Sparkles className="mr-2 h-4 w-4 text-primary" />
-                    WBChat Pro
+                    运营大脑 Pro
                   </DropdownMenuItem>
                   <DropdownMenuItem>
                     <Zap className="mr-2 h-4 w-4 text-yellow-500" />
-                    WBChat Flash
+                    运营大脑 Flash
                   </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>

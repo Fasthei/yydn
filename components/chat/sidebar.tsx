@@ -162,9 +162,9 @@ export function Sidebar({
       {/* Header */}
       <div className="flex items-center gap-2 px-4 py-4">
         <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10">
-          <span className="text-sm font-bold text-primary">WB</span>
+          <span className="text-sm font-bold text-primary">运</span>
         </div>
-        <span className="text-lg font-semibold text-sidebar-foreground">WBChat</span>
+        <span className="text-lg font-semibold text-sidebar-foreground">运营大脑</span>
         <span className="ml-1 rounded bg-primary/20 px-1.5 py-0.5 text-xs text-primary">Pro</span>
       </div>
 
