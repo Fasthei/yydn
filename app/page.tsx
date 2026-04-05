@@ -366,6 +366,10 @@ export default function ChatPage() {
           effectiveSearchMode = matchesKeywords(lower, DEEP_SEARCH_KEYWORDS) ? "deep" : "quick"
         }
       }
+      // Default search mode to "quick" when tool is search but mode not specified
+      if (effectiveTool === "search" && !effectiveSearchMode) {
+        effectiveSearchMode = "quick"
+      }
 
       // Stream AI response via SSE — create assistant message first so status text is visible
       const assistantMsgId = (Date.now() + 1).toString()
