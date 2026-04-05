@@ -19,8 +19,8 @@ export function WelcomeArea({ username, onQuickAction }: WelcomeAreaProps) {
   const quickActions: QuickAction[] = [
     {
       icon: <Globe className="h-5 w-5" />,
-      label: "搜索信息",
-      description: "联网搜索获取最新信息",
+      label: "知识搜索",
+      description: "检索内部知识库文档",
       onClick: () => onQuickAction?.("search"),
     },
     {

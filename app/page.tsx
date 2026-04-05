@@ -234,16 +234,29 @@ export default function ChatPage() {
 
       // Create thread if none selected
       let threadId = currentChatId
+      let isNewThread = false
       if (!threadId) {
         try {
           const thread = await createThread()
           threadId = thread.thread_id
-          setChats((prev) => [{ id: threadId!, title: message.slice(0, 30) || "新对话", branchCount: 0 }, ...prev])
+          const title = message.slice(0, 30) || "新对话"
+          setChats((prev) => [{ id: threadId!, title, branchCount: 0 }, ...prev])
           setCurrentChatId(threadId)
+          isNewThread = true
+          // Rename on backend
+          renameThread(threadId, title).catch(() => {})
         } catch (err) {
           console.error("Failed to create thread:", err)
           setConnectionStatus("error")
           return
+        }
+      } else {
+        // Auto-rename if current title is "新���话" (first message in existing thread)
+        const currentChat = chats.find((c) => c.id === threadId)
+        if (currentChat?.title === "新对话" && message.trim()) {
+          const newTitle = message.slice(0, 30)
+          setChats((prev) => prev.map((c) => (c.id === threadId ? { ...c, title: newTitle } : c)))
+          renameThread(threadId, newTitle).catch(() => {})
         }
       }
 
@@ -258,8 +271,23 @@ export default function ChatPage() {
       setMessages((prev) => [...prev, userMessage])
       setIsLoading(true)
 
+      // Auto-detect tool intent from message keywords when no tool explicitly selected
+      let effectiveTool = options.tool
+      let effectiveSearchMode = options.searchMode
+      if (!effectiveTool) {
+        const lower = message.toLowerCase()
+        if (lower.includes("沙盒") || lower.includes("sandbox") || lower.includes("执行脚本") || lower.includes("诊断脚本")) {
+          effectiveTool = "sandbox"
+        } else if (lower.includes("生成文档") || lower.includes("文档摘要") || lower.includes("故障分析文档") || lower.includes("generate document")) {
+          effectiveTool = "document"
+        } else if (lower.includes("深度搜索") || lower.includes("deep search")) {
+          effectiveTool = "search"
+          effectiveSearchMode = "deep"
+        }
+      }
+
       // Handle tool-specific pre-calls
-      if (options.tool === "search" && options.searchMode === "deep") {
+      if (effectiveTool === "search" && effectiveSearchMode === "deep") {
         setSearchDepth("deep")
         try {
           const res = await searchKB(message, "deep")
@@ -275,7 +303,7 @@ export default function ChatPage() {
         } catch (err) {
           console.error("Search failed:", err)
         }
-      } else if (options.tool === "sandbox") {
+      } else if (effectiveTool === "sandbox") {
         setShowSandboxPanel(true)
         setSandboxStatus("running")
         setSandboxSteps([
@@ -301,7 +329,7 @@ export default function ChatPage() {
           console.error("Sandbox failed:", err)
           setSandboxStatus("error")
         }
-      } else if (options.tool === "document") {
+      } else if (effectiveTool === "document") {
         setShowDocumentWorkspace(true)
         setIsDocumentGenerating(true)
         try {
@@ -331,11 +359,11 @@ export default function ChatPage() {
           role: "assistant",
           content: "",
           timestamp: nowTs(),
-          toolUsed: options.tool === "search"
-            ? (options.searchMode === "deep" ? "深度搜索" : "快速搜索")
-            : options.tool === "document"
+          toolUsed: effectiveTool === "search"
+            ? (effectiveSearchMode === "deep" ? "深度搜索" : "快速搜索")
+            : effectiveTool === "document"
             ? "文档生成"
-            : options.tool === "sandbox"
+            : effectiveTool === "sandbox"
             ? "沙盒执行"
             : undefined,
           ticketContext: loadedTicketIds.length > 0 ? loadedTicketIds : undefined,
@@ -431,7 +459,7 @@ export default function ChatPage() {
 
       abortRef.current = abort
     },
-    [currentChatId, loadedTicketIds]
+    [currentChatId, loadedTicketIds, chats]
   )
 
   // ─── Thread operations ─────────────────────────────────
