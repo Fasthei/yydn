@@ -286,11 +286,77 @@ export default function ChatPage() {
         }
       }
 
+      // Stream AI response via SSE — create assistant message first so status text is visible
+      const assistantMsgId = (Date.now() + 1).toString()
+
+      // Build initial status prefix based on detected tools
+      const toolStatusLines: string[] = []
+      if (effectiveTool === "search") {
+        toolStatusLines.push("🔍 正在检索知识库...")
+      }
+      if (effectiveTool === "sandbox") {
+        toolStatusLines.push("🔧 正在执行沙盒诊断...")
+      }
+      if (effectiveTool === "document") {
+        toolStatusLines.push("📄 正在生成文档...")
+      }
+      // For combo scenarios: also detect secondary tool keywords when a primary tool is set
+      if (effectiveTool && effectiveTool !== "sandbox") {
+        const lower = message.toLowerCase()
+        if (lower.includes("沙盒") || lower.includes("sandbox") || lower.includes("诊断")) {
+          toolStatusLines.push("🔧 正在执行沙盒诊断...")
+        }
+      }
+      if (effectiveTool && effectiveTool !== "document") {
+        const lower = message.toLowerCase()
+        if (lower.includes("生成文档") || lower.includes("文档摘要") || lower.includes("故障分析文档")) {
+          toolStatusLines.push("📄 正在生成文档...")
+        }
+      }
+      if (effectiveTool && effectiveTool !== "search") {
+        const lower = message.toLowerCase()
+        if (lower.includes("搜索") || lower.includes("检索") || lower.includes("search")) {
+          toolStatusLines.push("🔍 正在检索知识库...")
+        }
+      }
+
+      // Deduplicate status lines
+      const uniqueStatusLines = [...new Set(toolStatusLines)]
+      const statusPrefix = uniqueStatusLines.length > 0 ? uniqueStatusLines.join("\n") + "\n\n" : ""
+
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: assistantMsgId,
+          role: "assistant",
+          content: statusPrefix,
+          timestamp: nowTs(),
+          toolUsed: effectiveTool === "search"
+            ? (effectiveSearchMode === "deep" ? "深度搜索" : "快速搜索")
+            : effectiveTool === "document"
+            ? "文档生成"
+            : effectiveTool === "sandbox"
+            ? "沙盒执行"
+            : undefined,
+          ticketContext: loadedTicketIds.length > 0 ? loadedTicketIds : undefined,
+        },
+      ])
+
+      // Helper to update a status line in the assistant message
+      const updateStatusLine = (oldText: string, newText: string) => {
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === assistantMsgId ? { ...m, content: m.content.replace(oldText, newText) } : m
+          )
+        )
+      }
+
       // Handle tool-specific pre-calls
       if (effectiveTool === "search" && effectiveSearchMode === "deep") {
         setSearchDepth("deep")
         try {
           const res = await searchKB(message, "deep")
+          const sourceCount = res.sources.length
           setCurrentSources(res.sources.map(mapBackendSource))
           setSearchSteps(
             res.steps.map((s) => ({
@@ -300,8 +366,10 @@ export default function ChatPage() {
             }))
           )
           setShowSourcesPanel(true)
+          updateStatusLine("🔍 正在检索知识库...", `✅ 知识库检索完成，找到 ${sourceCount} 条结果`)
         } catch (err) {
           console.error("Search failed:", err)
+          updateStatusLine("🔍 正在检索知识库...", "❌ 知识库检索失败")
         }
       } else if (effectiveTool === "sandbox") {
         setShowSandboxPanel(true)
@@ -325,9 +393,11 @@ export default function ChatPage() {
             }))
           )
           setSandboxStatus("completed")
+          updateStatusLine("🔧 正在执行沙盒诊断...", "✅ 沙盒诊断完成")
         } catch (err) {
           console.error("Sandbox failed:", err)
           setSandboxStatus("error")
+          updateStatusLine("🔧 正在执行沙盒诊断...", "❌ 沙盒诊断失败")
         }
       } else if (effectiveTool === "document") {
         setShowDocumentWorkspace(true)
@@ -344,31 +414,13 @@ export default function ChatPage() {
               label: v.label,
             }))
           )
+          updateStatusLine("📄 正在生成文档...", "✅ 文档已生成，请在右侧面板查看")
         } catch (err) {
           console.error("Document generation failed:", err)
+          updateStatusLine("📄 正在生成文档...", "❌ 文档生成失败")
         }
         setIsDocumentGenerating(false)
       }
-
-      // Stream AI response via SSE
-      const assistantMsgId = (Date.now() + 1).toString()
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: assistantMsgId,
-          role: "assistant",
-          content: "",
-          timestamp: nowTs(),
-          toolUsed: effectiveTool === "search"
-            ? (effectiveSearchMode === "deep" ? "深度搜索" : "快速搜索")
-            : effectiveTool === "document"
-            ? "文档生成"
-            : effectiveTool === "sandbox"
-            ? "沙盒执行"
-            : undefined,
-          ticketContext: loadedTicketIds.length > 0 ? loadedTicketIds : undefined,
-        },
-      ])
 
       const { abort } = streamChat(threadId, message, {
         ticketIds: loadedTicketIds.length > 0 ? loadedTicketIds : undefined,
@@ -430,7 +482,14 @@ export default function ChatPage() {
             const finalMsg = data.messages.find((m) => m.type === "ai")
             if (finalMsg) {
               setMessages((prev) =>
-                prev.map((m) => (m.id === assistantMsgId ? { ...m, content: finalMsg.content } : m))
+                prev.map((m) => {
+                  if (m.id !== assistantMsgId) return m
+                  // Preserve status prefix lines (lines starting with emoji indicators)
+                  const lines = m.content.split("\n")
+                  const statusLines = lines.filter((l) => /^[✅❌🔧📄🔍]/.test(l.trim()))
+                  const prefix = statusLines.length > 0 ? statusLines.join("\n") + "\n\n" : ""
+                  return { ...m, content: prefix + finalMsg.content }
+                })
               )
             }
           },

@@ -192,10 +192,10 @@ export function ChatInput({
                       </Button>
                     </DropdownMenuTrigger>
                   </TooltipTrigger>
-                  <TooltipContent>联网搜索</TooltipContent>
+                  <TooltipContent>知识搜索</TooltipContent>
                 </Tooltip>
                 <DropdownMenuContent align="start" className="w-56">
-                  <DropdownMenuLabel>联网搜索模式</DropdownMenuLabel>
+                  <DropdownMenuLabel>知识搜索模式</DropdownMenuLabel>
                   <DropdownMenuSeparator />
                   <DropdownMenuItem
                     onClick={() => toggleSearchMode("quick")}
@@ -205,7 +205,7 @@ export function ChatInput({
                     <div className="flex flex-col">
                       <span>快速搜索</span>
                       <span className="text-xs text-muted-foreground">
-                        快速获取简要信息
+                        快速检索知识库
                       </span>
                     </div>
                   </DropdownMenuItem>
@@ -217,7 +217,7 @@ export function ChatInput({
                     <div className="flex flex-col">
                       <span>深度搜索</span>
                       <span className="text-xs text-muted-foreground">
-                        深度分析多个来源
+                        深度检索并分析知识库文档
                       </span>
                     </div>
                   </DropdownMenuItem>
