@@ -183,6 +183,24 @@ export function createBranch(threadId: string, fromMessageId: string, name?: str
   })
 }
 
+// ─── Checkpoints ────────────────────────────────────────
+export interface CheckpointInfo {
+  id: string
+  name: string
+  state: Record<string, unknown>
+  created_at: number
+}
+
+export function listCheckpoints(runId: string) {
+  return request<CheckpointInfo[]>("GET", `/runs/${runId}/checkpoints`)
+}
+
+export function replayCheckpoint(runId: string, checkpointId: string) {
+  return request<{ ok: boolean; checkpoint: CheckpointInfo }>("POST", `/runs/${runId}/replay`, {
+    checkpoint_id: checkpointId,
+  })
+}
+
 // ─── Runs ────────────────────────────────────────────────
 export function interruptRun(runId: string, action: "approve" | "reject" | "resume", note?: string) {
   return request<{ ok: boolean }>("POST", `/runs/${runId}/interrupt`, { action, note })

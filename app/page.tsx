@@ -18,21 +18,37 @@ import {
   listThreads, createThread, deleteThread, renameThread,
   searchKB, generateDocument, saveDocument, runSandbox,
   listTickets, getMessages, interruptRun, checkHealth,
-  type BackendSource,
+  listBranches, createBranch, listCheckpoints, replayCheckpoint,
+  type BackendSource, type BranchInfo, type CheckpointInfo,
 } from "@/lib/api-client"
 import { streamChat } from "@/lib/sse-client"
 
-// Branches and checkpoints kept as mock (Phase 4)
-const mockBranches: Branch[] = [
-  { id: "branch-1", name: "主分支", chatId: "1", parentId: undefined, parentMessageId: undefined, createdAt: "2 小时前", isActive: true, messageCount: 5 },
-  { id: "branch-2", name: "性能优化方案 A", chatId: "1", parentId: "branch-1", parentMessageId: "msg-3", createdAt: "1 小时前", isActive: false, messageCount: 3 },
-  { id: "branch-3", name: "数据库索引讨论", chatId: "3", parentId: undefined, parentMessageId: undefined, createdAt: "3 小时前", isActive: true, messageCount: 4 },
+// ─── Tool keyword lists for intent detection ─────────────
+const SANDBOX_KEYWORDS = [
+  "沙盒", "sandbox", "执行脚本", "诊断脚本", "排查脚本",
+  "运行代码", "执行代码", "run code", "代码执行",
+  "调试", "debug", "脚本示例", "写个脚本", "写脚本",
 ]
+const DOCUMENT_KEYWORDS = [
+  "生成文档", "文档摘要", "故障分析文档", "generate document",
+  "写文档", "文档报告", "生成报告", "分析报告",
+  "总结文档", "write document", "generate report", "故障报告", "摘要",
+]
+const SEARCH_KEYWORDS = [
+  "深度搜索", "deep search", "搜索", "查找", "检索",
+  "查一下", "帮我找", "search", "find", "lookup", "知识库",
+]
+const DEEP_SEARCH_KEYWORDS = ["深度搜索", "deep search", "深度检索", "深度查找"]
 
-const mockCheckpoints: Checkpoint[] = [
-  { id: "cp-1", messageId: "msg-2", timestamp: "14:30", preview: "讨论了 API 超时的可能原因...", branchId: "branch-1" },
-  { id: "cp-2", messageId: "msg-4", timestamp: "14:45", preview: "确定了优化方向...", branchId: "branch-1" },
-]
+const SANDBOX_SECONDARY = ["沙盒", "sandbox", "诊断", "执行脚本", "运行代码", "调试"]
+const DOCUMENT_SECONDARY = ["生成文档", "文档摘要", "故障分析文档", "写文档", "生成报告", "摘要"]
+const SEARCH_SECONDARY = ["搜索", "检索", "search", "查找", "知识库"]
+
+function matchesKeywords(text: string, keywords: string[]): boolean {
+  return keywords.some((kw) => text.includes(kw))
+}
+
+// Branches and checkpoints — now backed by real API
 
 interface ChatMessage {
   id: string
@@ -103,7 +119,9 @@ export default function ChatPage() {
   const [selectedTicketIds, setSelectedTicketIds] = useState<string[]>([])
   const [loadedTicketIds, setLoadedTicketIds] = useState<string[]>([])
   const [currentChatId, setCurrentChatId] = useState<string | undefined>()
-  const [currentBranchId, setCurrentBranchId] = useState<string>("branch-1")
+  const [currentBranchId, setCurrentBranchId] = useState<string>("main")
+  const [branches, setBranches] = useState<Branch[]>([])
+  const [checkpoints, setCheckpoints] = useState<Checkpoint[]>([])
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [isLoading, setIsLoading] = useState(false)
   const [chats, setChats] = useState<{ id: string; title: string; branchCount?: number; isStarred?: boolean }[]>([])
@@ -161,6 +179,69 @@ export default function ChatPage() {
         setConnectionStatus("error")
       })
   }, [])
+
+  // ─── Clean up "新对话" dirty titles on mount ────────────
+  useEffect(() => {
+    if (chats.length === 0) return
+    const dirtyChats = chats.filter((c) => !c.title || c.title === "新对话").slice(0, 10)
+    if (dirtyChats.length === 0) return
+    Promise.allSettled(
+      dirtyChats.map(async (chat) => {
+        try {
+          const msgs = await getMessages(chat.id)
+          const firstUser = msgs.find((m) => m.type === "human")
+          if (firstUser?.content) {
+            const newTitle = firstUser.content.slice(0, 30)
+            await renameThread(chat.id, newTitle)
+            setChats((prev) => prev.map((c) => (c.id === chat.id ? { ...c, title: newTitle } : c)))
+          }
+        } catch { /* ignore per-thread errors */ }
+      })
+    )
+  }, [chats.length]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ─── Load branches when chat changes ────────────────────
+  useEffect(() => {
+    if (!currentChatId) {
+      setBranches([])
+      setCheckpoints([])
+      return
+    }
+    listBranches(currentChatId)
+      .then((bs) => {
+        setBranches(
+          bs.map((b) => ({
+            id: b.id,
+            name: b.name,
+            chatId: currentChatId!,
+            parentId: undefined,
+            parentMessageId: b.from_message_id,
+            createdAt: new Date(b.created_at * 1000).toLocaleTimeString("zh-CN"),
+            isActive: b.name === "main",
+            messageCount: 0,
+          }))
+        )
+        if (bs.length > 0) setCurrentBranchId(bs[0].id)
+      })
+      .catch(() => setBranches([]))
+
+    // Load checkpoints if we have a run
+    if (currentRunId) {
+      listCheckpoints(currentRunId)
+        .then((cks) => {
+          setCheckpoints(
+            cks.map((ck) => ({
+              id: ck.id,
+              messageId: "",
+              timestamp: new Date(ck.created_at * 1000).toLocaleTimeString("zh-CN"),
+              preview: ck.name,
+              branchId: currentBranchId,
+            }))
+          )
+        })
+        .catch(() => setCheckpoints([]))
+    }
+  }, [currentChatId, currentRunId]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ─── Load tickets on mount ─────────────────────────────
   useEffect(() => {
@@ -276,13 +357,13 @@ export default function ChatPage() {
       let effectiveSearchMode = options.searchMode
       if (!effectiveTool) {
         const lower = message.toLowerCase()
-        if (lower.includes("沙盒") || lower.includes("sandbox") || lower.includes("执行脚本") || lower.includes("诊断脚本")) {
+        if (matchesKeywords(lower, SANDBOX_KEYWORDS)) {
           effectiveTool = "sandbox"
-        } else if (lower.includes("生成文档") || lower.includes("文档摘要") || lower.includes("故障分析文档") || lower.includes("generate document")) {
+        } else if (matchesKeywords(lower, DOCUMENT_KEYWORDS)) {
           effectiveTool = "document"
-        } else if (lower.includes("深度搜索") || lower.includes("deep search")) {
+        } else if (matchesKeywords(lower, SEARCH_KEYWORDS)) {
           effectiveTool = "search"
-          effectiveSearchMode = "deep"
+          effectiveSearchMode = matchesKeywords(lower, DEEP_SEARCH_KEYWORDS) ? "deep" : "quick"
         }
       }
 
@@ -301,21 +382,15 @@ export default function ChatPage() {
         toolStatusLines.push("📄 正在生成文档...")
       }
       // For combo scenarios: also detect secondary tool keywords when a primary tool is set
-      if (effectiveTool && effectiveTool !== "sandbox") {
+      if (effectiveTool) {
         const lower = message.toLowerCase()
-        if (lower.includes("沙盒") || lower.includes("sandbox") || lower.includes("诊断")) {
+        if (effectiveTool !== "sandbox" && matchesKeywords(lower, SANDBOX_SECONDARY)) {
           toolStatusLines.push("🔧 正在执行沙盒诊断...")
         }
-      }
-      if (effectiveTool && effectiveTool !== "document") {
-        const lower = message.toLowerCase()
-        if (lower.includes("生成文档") || lower.includes("文档摘要") || lower.includes("故障分析文档")) {
+        if (effectiveTool !== "document" && matchesKeywords(lower, DOCUMENT_SECONDARY)) {
           toolStatusLines.push("📄 正在生成文档...")
         }
-      }
-      if (effectiveTool && effectiveTool !== "search") {
-        const lower = message.toLowerCase()
-        if (lower.includes("搜索") || lower.includes("检索") || lower.includes("search")) {
+        if (effectiveTool !== "search" && matchesKeywords(lower, SEARCH_SECONDARY)) {
           toolStatusLines.push("🔍 正在检索知识库...")
         }
       }
@@ -599,18 +674,74 @@ export default function ChatPage() {
     }
   }, [])
 
-  // ─── Branch/Checkpoint (Phase 4 stubs) ─────────────────
-  const handleBranch = (messageId: string) => {
-    console.log("Creating branch from message:", messageId)
-  }
+  // ─── Branch/Checkpoint ─────────────────────────────────
+  const handleBranch = useCallback(
+    async (messageId: string) => {
+      if (!currentChatId) return
+      try {
+        const branch = await createBranch(currentChatId, messageId)
+        setBranches((prev) => [
+          ...prev,
+          {
+            id: branch.id,
+            name: branch.name,
+            chatId: currentChatId,
+            parentId: currentBranchId,
+            parentMessageId: messageId,
+            createdAt: new Date(branch.created_at * 1000).toLocaleTimeString("zh-CN"),
+            isActive: false,
+            messageCount: 0,
+          },
+        ])
+        setCurrentBranchId(branch.id)
+      } catch (err) {
+        console.error("Failed to create branch:", err)
+      }
+    },
+    [currentChatId, currentBranchId]
+  )
 
-  const handleCheckpoint = (messageId: string) => {
-    console.log("Creating checkpoint at message:", messageId)
-  }
+  const handleCheckpoint = useCallback(
+    async (_messageId: string) => {
+      if (!currentRunId) return
+      try {
+        const cks = await listCheckpoints(currentRunId)
+        setCheckpoints(
+          cks.map((ck) => ({
+            id: ck.id,
+            messageId: "",
+            timestamp: new Date(ck.created_at * 1000).toLocaleTimeString("zh-CN"),
+            preview: ck.name,
+            branchId: currentBranchId,
+          }))
+        )
+      } catch (err) {
+        console.error("Failed to load checkpoints:", err)
+      }
+    },
+    [currentRunId, currentBranchId]
+  )
 
-  const handleReplay = (checkpointId: string) => {
-    console.log("Replaying from checkpoint:", checkpointId)
-  }
+  const handleReplay = useCallback(
+    async (checkpointId: string) => {
+      if (!currentRunId) return
+      try {
+        await replayCheckpoint(currentRunId, checkpointId)
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: Date.now().toString(),
+            role: "assistant",
+            content: `已从检查点 ${checkpointId.substring(0, 8)}... 重放，对话状态已恢复。`,
+            timestamp: nowTs(),
+          },
+        ])
+      } catch (err) {
+        console.error("Failed to replay:", err)
+      }
+    },
+    [currentRunId]
+  )
 
   // ─── Connection ────────────────────────────────────────
   const handleReconnect = useCallback(() => {
@@ -746,7 +877,7 @@ export default function ChatPage() {
       <Sidebar
         chats={chats}
         tickets={sidebarTickets}
-        branches={mockBranches}
+        branches={branches}
         selectedTickets={loadedTicketIds}
         onSelectTicket={(id) => {
           if (loadedTicketIds.includes(id)) {
@@ -779,9 +910,9 @@ export default function ChatPage() {
         >
           {/* Branch Selector */}
           <ConversationBranch
-            branches={mockBranches}
+            branches={branches}
             currentBranchId={currentBranchId}
-            checkpoints={mockCheckpoints}
+            checkpoints={checkpoints}
             onSwitchBranch={setCurrentBranchId}
             onCreateBranch={handleBranch}
             onReplay={handleReplay}
