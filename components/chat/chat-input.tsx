@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useRef, KeyboardEvent } from "react"
+import React, { useState, useRef, useEffect, KeyboardEvent } from "react"
 import {
   Plus,
   Globe,
@@ -37,6 +37,7 @@ interface ChatInputProps {
   disabled?: boolean
   placeholder?: string
   selectedTickets?: string[]
+  initialTool?: Tool
 }
 
 export function ChatInput({
@@ -44,11 +45,21 @@ export function ChatInput({
   disabled = false,
   placeholder = "输入任何内容，搜索数据，@提及或 /工具",
   selectedTickets = [],
+  initialTool,
 }: ChatInputProps) {
   const [message, setMessage] = useState("")
   const [searchMode, setSearchMode] = useState<SearchMode>(null)
   const [activeTool, setActiveTool] = useState<Tool>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+
+  // Allow parent to activate a tool (e.g. from welcome quick actions)
+  useEffect(() => {
+    if (initialTool) {
+      setActiveTool(initialTool)
+      if (initialTool === "search") setSearchMode("deep")
+      textareaRef.current?.focus()
+    }
+  }, [initialTool])
 
   const handleSend = () => {
     if (message.trim() && !disabled) {

@@ -606,9 +606,13 @@ export default function ChatPage() {
     console.log("Exporting as:", format)
   }
 
+  const [quickTool, setQuickTool] = useState<"search" | "document" | "sandbox" | null>(null)
+
   const handleQuickAction = (action: string) => {
     if (action === "ticket") {
       setShowTicketPanel(true)
+    } else if (action === "search" || action === "document" || action === "sandbox") {
+      setQuickTool(action)
     }
   }
 
@@ -736,9 +740,13 @@ export default function ChatPage() {
             {/* Input Area */}
             <div className="border-t border-border bg-background py-4">
               <ChatInput
-                onSend={handleSend}
+                onSend={(msg, opts) => {
+                  setQuickTool(null)
+                  handleSend(msg, opts)
+                }}
                 disabled={isLoading}
                 selectedTickets={loadedTicketIds}
+                initialTool={quickTool}
               />
               <p className="mt-2 text-center text-xs text-muted-foreground">
                 运营大脑可能会出错，请核实重要信息
