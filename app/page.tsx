@@ -358,12 +358,21 @@ export default function ChatPage() {
           },
           onSources: (sources) => {
             const mapped = sources.map(mapBackendSource)
-            setCurrentSources(mapped)
-            setShowSourcesPanel(true)
-            // Also attach to message
-            setMessages((prev) =>
-              prev.map((m) => (m.id === assistantMsgId ? { ...m, sources: mapped } : m))
-            )
+            // Only update if SSE returned results, or if no prior search results exist
+            // This prevents SSE's internal KB search from overwriting explicit deep search results
+            if (mapped.length > 0) {
+              setCurrentSources((prev) => (prev.length > 0 ? [...prev, ...mapped.filter((s) => !prev.some((p) => p.id === s.id))] : mapped))
+              setShowSourcesPanel(true)
+              setMessages((prev) =>
+                prev.map((m) => (m.id === assistantMsgId ? { ...m, sources: mapped } : m))
+              )
+            } else {
+              // SSE returned empty sources — keep existing results if any, just show panel
+              setCurrentSources((prev) => {
+                if (prev.length > 0) setShowSourcesPanel(true)
+                return prev
+              })
+            }
           },
           onToolStatus: (data) => {
             setSearchSteps((prev) => {
